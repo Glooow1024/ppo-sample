@@ -94,7 +94,7 @@ def make_vec_envs(env_name,
 
     if len(envs.observation_space.shape) == 1:
         if gamma is None:
-            envs = VecNormalize(envs, ret=False)
+            envs = VecNormalize(envs, ret=False)   ### 修改了 baselines 源码 6/29
         else:
             envs = VecNormalize(envs, gamma=gamma)
 
@@ -195,7 +195,7 @@ class VecNormalize(VecNormalize_):
                 self.ob_rms.update(obs)
             obs = np.clip((obs - self.ob_rms.mean) /
                           np.sqrt(self.ob_rms.var + self.epsilon),
-                          -self.clipob, self.clipob)
+                          -self.clipob, self.clipob)   ### obs 也需要改？ 6/29
             return obs
         else:
             return obs

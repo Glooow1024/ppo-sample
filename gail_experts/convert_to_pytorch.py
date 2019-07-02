@@ -12,7 +12,7 @@ def main():
         'Converts expert trajectories from h5 to pt format.')
     parser.add_argument(
         '--h5-file',
-        default='trajs_halfcheetah.h5',
+        default='trajs_walker.h5',
         help='input h5 file',
         type=str)
     parser.add_argument(

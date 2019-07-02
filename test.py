@@ -1,8 +1,11 @@
+# 改自 main.py
+
 import copy
 import glob
 import os
 import time
 from collections import deque
+import h5py
 
 import gym
 import numpy as np
@@ -22,8 +25,7 @@ from evaluation import evaluate
 
 def main():
     all_episode_rewards = []   ### 记录 6/29
-    all_temp_rewards_run = []   ### 记录 6/29
-    all_temp_rewards_ctrl = []
+    all_temp_rewards = []   ### 记录 6/29
     args = get_args()
 
     torch.manual_seed(args.seed)
@@ -103,10 +105,29 @@ def main():
     start = time.time()
     num_updates = int(
         args.num_env_steps) // args.num_steps // args.num_processes
-    for j in range(num_updates):
+    print('num_updates ', num_updates)
+    print('num_steps ', args.num_steps)
+    count = 0
+    h5_path = './data/' + args.env_name
+    if not os.path.exists(h5_path):
+        os.makedirs(h5_path)
+    h5_filename = h5_path + '/trajs_'+args.env_name+'_%05d.h5'%(count)
+    data = {}
+    data['states'] = []
+    data['actions'] = []
+    data['rewards'] = []
+    data['done'] = []
+    data['lengths'] = []
+    
+    episode_step = 0
+    
+    for j in range(num_updates):   ### num-steps
 
-        temp_rewards_run = [] ### 6/29
-        temp_rewards_ctrl = []
+        temp_states = []
+        temp_actions = []
+        temp_rewards = []
+        temp_done = []
+        temp_lenthgs = []
         
         if args.use_linear_lr_decay:
             # decrease learning rate linearly
@@ -121,13 +142,34 @@ def main():
                     rollouts.obs[step], rollouts.recurrent_hidden_states[step],
                     rollouts.masks[step])
 
+            if j==0 and step ==0:
+                print('obs ',type(rollouts.obs[step]),rollouts.obs[step].shape)
+                print('hidden_states ',
+                      type(rollouts.recurrent_hidden_states[step]),rollouts.recurrent_hidden_states[step].shape)
+                print('action ',type(action), action.shape)
+                print('action prob ',type(action_log_prob),action_log_prob.shape)
+                print('-'*20)
+                
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
             
             #print(infos)
             #print(reward)
-            temp_rewards_run += [np.array([infos[0]['reward_run']])]   ### 6/29
-            temp_rewards_ctrl += [np.array([infos[0]['reward_ctrl']])]
+            temp_states += [np.array(rollouts.obs[step].cpu())]
+            temp_actions += [np.array(action.cpu())]
+            #temp_rewards += [np.array(reward.cpu())]
+            temp_rewards += [np.array([infos[0]['myrewards']])]  ### for halfcheetah不能直接用 reward ！！ 6/29
+            temp_done += [np.array(done)]
+            
+            if j==0 and step ==0:
+                print('obs ',type(obs), obs.shape)
+                print('reward ',type(reward), reward.shape)
+                print('done ',type(done), done.shape)
+                print('infos ',len(infos))
+                for k,v in infos[0].items():
+                    print(k,v.shape)
+                print()
+            
 
             for info in infos:
                 if 'episode' in info.keys():
@@ -143,9 +185,48 @@ def main():
             rollouts.insert(obs, recurrent_hidden_states, action,
                             action_log_prob, value, reward, masks, bad_masks)
 
-        temp_rewards_run = np.concatenate(temp_rewards_run)  ### 6/29
-        temp_rewards_ctrl = np.concatenate(temp_rewards_ctrl)
+        temp_lengths = len(temp_states)
+        temp_states = np.concatenate(temp_states)
+        temp_actions = np.concatenate(temp_actions)
+        temp_rewards = np.concatenate(temp_rewards)
+        temp_done = np.concatenate(temp_done)
+        #print('temp_lengths',temp_lengths)
+        #print('temp_states', temp_states.shape)
+        #print('temp_actions', temp_actions.shape)
+        #print('temp_rewards', temp_rewards.shape)
+        if j > int(0.4*num_updates):
+            data['states'] += [temp_states]
+            data['actions'] += [temp_actions]
+            data['rewards'] += [temp_rewards]
+            data['lengths'] += [temp_lengths]
+            data['done'] += [temp_done]
+            #print('temp_lengths',data['lengths'].shape)
+            #print('temp_states', data['states'].shape)
+            #print('temp_actions', data['actions'].shape)
+            #print('temp_rewards', data['rewards'].shape)
             
+
+            if args.save_expert and len(data['states']) >= 100:
+                with h5py.File(h5_filename, 'w') as f:
+                    f['states'] = np.array(data['states'])
+                    f['actions'] = np.array(data['actions'])
+                    f['rewards'] = np.array(data['rewards'])
+                    f['done'] = np.array(data['done'])
+                    f['lengths'] = np.array(data['lengths'])
+                    #print('f_lengths',f['lengths'].shape)
+                    #print('f_states', f['states'].shape)
+                    #print('f_actions', f['actions'].shape)
+                    #print('f_rewards', f['rewards'].shape)
+                
+                count += 1
+                h5_filename = h5_path + '/trajs_'+args.env_name+'_%05d.h5'%(count)
+                data['states'] = []
+                data['actions'] = []
+                data['rewards'] = []
+                data['done'] = []
+                data['lengths'] =[]
+                
+                
         with torch.no_grad():
             next_value = actor_critic.get_value(
                 rollouts.obs[-1], rollouts.recurrent_hidden_states[-1],
@@ -199,17 +280,14 @@ def main():
                         np.median(episode_rewards), np.min(episode_rewards),
                         np.max(episode_rewards), dist_entropy, value_loss,
                         action_loss))
-            #np.save(os.path.join(save_path, args.env_name + "_%d"%(args.seed)), all_episode_rewards)### 保存记录 6/29
-            print("temp rewards run size", temp_rewards_run.shape,
-                  "mean",np.mean(temp_rewards_run),"min",np.min(temp_rewards_run),
-                  "max",np.max(temp_rewards_run))
-            print("temp rewards ctrl size", temp_rewards_ctrl.shape,
-                  "mean",np.mean(temp_rewards_ctrl),"min",np.min(temp_rewards_ctrl),
-                  "max",np.max(temp_rewards_ctrl))
-            all_temp_rewards_run += [temp_rewards_run]
-            all_temp_rewards_ctrl += [temp_rewards_ctrl]
+            #np.save(os.path.join(save_path, args.env_name+"_%d"%(args.seed)), all_episode_rewards)  ### 保存记录 6/29
+            #print(temp_rewards)
+            print("temp rewards size", temp_rewards.shape,
+                  "mean",np.mean(temp_rewards),"min",np.min(temp_rewards),
+                  "max",np.max(temp_rewards))
+            all_temp_rewards += [temp_rewards]
             np.savez(os.path.join(save_path, args.env_name+"_%d"%(args.seed)),
-                     episode=all_episode_rewards,run=all_temp_rewards_run,ctrl=all_temp_rewards_ctrl)
+                     episode=all_episode_rewards, timestep=all_temp_rewards)
 
         if (args.eval_interval is not None and len(episode_rewards) > 1
                 and j % args.eval_interval == 0):
@@ -218,5 +296,19 @@ def main():
                      args.num_processes, eval_log_dir, device)
 
 
+    '''data['states'] = np.array(data['states'])
+    data['actions'] = np.array(data['actions'])
+    data['rewards'] = np.array(data['rewards'])
+    data['done'] = np.array(data['done'])
+    data['lengths'] = np.array(data['lengths'])
+    if args.save_expert:
+        with h5py.File(h5_filename, 'w') as f:
+            f['states'] = data['states']
+            f['actions'] = data['states']
+            f['rewards'] = data['rewards']
+            f['done'] = data['done']
+            f['lengths'] = data['lengths']'''
+    
+            
 if __name__ == "__main__":
     main()

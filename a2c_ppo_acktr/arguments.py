@@ -149,6 +149,11 @@ def get_args():
         action='store_true',
         default=False,
         help='use a linear schedule on the learning rate')
+    parser.add_argument(
+        '--save_expert',
+        action='store_true',
+        default=False,
+        help='save expert')
     args = parser.parse_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
